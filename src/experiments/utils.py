@@ -546,16 +546,17 @@ def model_fit_predict(mc, S_df, Y_df, X_df, f_cols, evaluate_train, ds_in_val, d
                                                     mode='min')
         callbacks=[early_stopping]
 
-    gpus = -1 if t.cuda.is_available() else 0
+    accelerator = "gpu" if t.cuda.is_available() else "cpu"
+    devices = 1 if t.cuda.is_available() else "auto"
     trainer = pl.Trainer(max_epochs=mc['max_epochs'],
                          max_steps=mc['max_steps'],
                          check_val_every_n_epoch=mc['eval_freq'],
-                         progress_bar_refresh_rate=1,
-                         gpus=gpus,
+                         accelerator=accelerator,
+                         devices=devices,
                          callbacks=callbacks,
-                         checkpoint_callback=False,
+                         enable_checkpointing=False,
                          logger=False)
-    trainer.fit(model, train_loader, val_loader)
+    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
     # Free trainer and training memory before predicting (trainer is not needed for manual predict)
     del trainer

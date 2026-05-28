@@ -114,7 +114,7 @@ class BaseDataset(Dataset):
         self.n_series = len(self.ts_data)
         self.max_len = max([len(ts) for ts in self.ts_data])
         self.n_channels = len(self.t_cols) # t_cols insample_mask and outsample_mask
-        self.frequency = pd.infer_freq(Y_df.head()['ds'])
+        self.frequency = pd.infer_freq(pd.to_datetime(Y_df.head()['ds']))
         self.f_cols = f_cols
         self.f_idxs = self._get_f_idxs(f_cols) if f_cols else []
         self.input_size = input_size

@@ -40,7 +40,7 @@ def get_experiment_space(args):
             'n_lr_decays': hp.choice('n_lr_decays', [3]), 
             'weight_decay': hp.choice('weight_decay', [0] ),
             'max_epochs': hp.choice('max_epochs', [None]),
-            'max_steps': hp.choice('max_steps', [1_000]),
+            'max_steps': hp.choice('max_steps', [150]),
             'early_stop_patience': hp.choice('early_stop_patience', [10]),
             'eval_freq': hp.choice('eval_freq', [50]),
             'loss_train': hp.choice('loss', ['MAE']),
@@ -104,7 +104,7 @@ def main(args):
         trials = hyperopt_tunning(space=space, hyperopt_max_evals=args.hyperopt_max_evals, loss_function_val=mae,
                                   loss_functions_test={'mae':mae, 'mse': mse},
                                   Y_df=Y_df, X_df=X_df, S_df=S_df, f_cols=[],
-                                  evaluate_train=True,
+                                  evaluate_train=False,
                                   ds_in_val=len_val, ds_in_test=len_test,
                                   return_forecasts=False,
                                   results_file = hyperopt_file,
@@ -121,6 +121,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description=desc)
     parser.add_argument('--hyperopt_max_evals', type=int, help='hyperopt_max_evals')
     parser.add_argument('--experiment_id', default=None, required=False, type=str, help='string to identify experiment')
+    parser.add_argument('--dataset', default=None, required=False, type=str, help='dataset name')
+    parser.add_argument('--horizon', default=None, required=False, type=int, help='horizon size')
     return parser.parse_args()
 
 if __name__ == '__main__':
@@ -132,11 +134,17 @@ if __name__ == '__main__':
 
     horizons = [96, 192, 336, 720]
     ILI_horizons = [24, 36, 48, 60]
-    datasets = ['ETTm2', 'Exchange', 'weather', 'ili', 'ECL', 'traffic']
+    
+    if args.dataset is not None:
+        datasets = [args.dataset]
+    else:
+        datasets = ['ETTm2', 'Exchange', 'ili', 'weather', 'ECL', 'traffic']
 
     for dataset in datasets:
         # Horizon
-        if dataset == 'ili':
+        if args.horizon is not None:
+            horizons_dataset = [args.horizon]
+        elif dataset == 'ili':
             horizons_dataset = ILI_horizons
         else:
             horizons_dataset = horizons
@@ -144,12 +152,12 @@ if __name__ == '__main__':
             print(50*'-', dataset, 50*'-')
             print(50*'-', horizon, 50*'-')
             start = time.time()
-            args.dataset = dataset
-            args.horizon = horizon
-            main(args)
+            import copy
+            temp_args = copy.deepcopy(args)
+            temp_args.dataset = dataset
+            temp_args.horizon = horizon
+            main(temp_args)
             print('Time: ', time.time() - start)
-
-    main(args)
 
 # source ~/anaconda3/etc/profile.d/conda.sh
 # conda activate nixtla

@@ -32,7 +32,7 @@ from ..models.transformer.autoformer import Autoformer
 # Cell
 def get_mask_dfs(Y_df, ds_in_val, ds_in_test):
     # train mask
-    train_mask_df = Y_df.copy()[['unique_id', 'ds']]
+    train_mask_df = Y_df[['unique_id', 'ds']].copy()
     train_mask_df.sort_values(by=['unique_id', 'ds'], inplace=True)
     train_mask_df.reset_index(drop=True, inplace=True)
 
@@ -417,9 +417,88 @@ def instantiate_model(mc):
     return MODEL_DICT[mc['model']](mc)
 
 # Cell
-def predict(mc, model, trainer, loader, scaler_y):
-   outputs = trainer.predict(model, loader)
-   y_true, y_hat, mask = [t.cat(output).cpu().numpy() for output in zip(*outputs)]
+def predict(mc, model, trainer, loader, scaler_y, return_arrays=True, loss_fns=None):
+   # Manual prediction loop to bypass PyTorch Lightning's trainer.predict
+   # and avoid massive memory leaks/overheads.
+   device = t.device('cuda' if t.cuda.is_available() else 'cpu')
+   model.eval()
+   model.to(device)
+
+   running_metrics = {}
+   if not return_arrays and loss_fns is not None:
+       for name in loss_fns.keys():
+           running_metrics[name] = {'sum_err': 0.0, 'sum_weights': 0.0}
+
+   y_true_list = []
+   y_hat_list = []
+   mask_list = []
+
+   with t.no_grad():
+       for batch in loader:
+           batch_dev = {}
+           for k, v in batch.items():
+               if isinstance(v, t.Tensor):
+                   batch_dev[k] = v.to(device)
+               else:
+                   batch_dev[k] = v
+           
+           outsample_y, forecast, outsample_mask = model(batch_dev)
+           y_t_cpu = outsample_y.cpu()
+           y_h_cpu = forecast.cpu()
+           w_cpu = outsample_mask.cpu()
+
+           if not return_arrays and loss_fns is not None:
+               y_t_np = y_t_cpu.numpy()
+               y_h_np = y_h_cpu.numpy()
+               w_np = w_cpu.numpy()
+
+               if mc['normalizer_y'] is not None:
+                   y_t_shape = y_t_np.shape
+                   y_t_np = scaler_y.inv_scale(x=y_t_np.flatten()).reshape(y_t_shape)
+                   y_h_np = scaler_y.inv_scale(x=y_h_np.flatten()).reshape(y_t_shape)
+
+               for name, fn in loss_fns.items():
+                   # Normalize the check (sometimes fn has name 'mae' or 'mse', or key name)
+                   metric_name = name.lower()
+                   if 'mae' in metric_name:
+                       abs_err = np.abs(y_t_np - y_h_np)
+                       valid_mask = ~np.isnan(abs_err)
+                       if w_np is not None:
+                           valid_mask = valid_mask & (w_np > 0)
+                           running_metrics[name]['sum_err'] += np.sum(abs_err[valid_mask] * w_np[valid_mask])
+                           running_metrics[name]['sum_weights'] += np.sum(w_np[valid_mask])
+                       else:
+                           running_metrics[name]['sum_err'] += np.sum(abs_err[valid_mask])
+                           running_metrics[name]['sum_weights'] += np.sum(valid_mask)
+                   elif 'mse' in metric_name:
+                       sq_err = np.square(y_t_np - y_h_np)
+                       valid_mask = ~np.isnan(sq_err)
+                       if w_np is not None:
+                           valid_mask = valid_mask & (w_np > 0)
+                           running_metrics[name]['sum_err'] += np.sum(sq_err[valid_mask] * w_np[valid_mask])
+                           running_metrics[name]['sum_weights'] += np.sum(w_np[valid_mask])
+                       else:
+                           running_metrics[name]['sum_err'] += np.sum(sq_err[valid_mask])
+                           running_metrics[name]['sum_weights'] += np.sum(valid_mask)
+           else:
+               y_true_list.append(y_t_cpu)
+               y_hat_list.append(y_h_cpu)
+               mask_list.append(w_cpu)
+
+   if not return_arrays and loss_fns is not None:
+       final_metrics = {}
+       for name in loss_fns.keys():
+           sum_err = running_metrics[name]['sum_err']
+           sum_weights = running_metrics[name]['sum_weights']
+           if sum_weights > 0:
+               final_metrics[name] = sum_err / sum_weights
+           else:
+               final_metrics[name] = 0.0
+       return final_metrics
+
+   y_true = t.cat(y_true_list).numpy()
+   y_hat = t.cat(y_hat_list).numpy()
+   mask = t.cat(mask_list).numpy()
    meta_data = loader.dataset.meta_data
 
    # Scale to original scale
@@ -434,11 +513,13 @@ def predict(mc, model, trainer, loader, scaler_y):
    return y_true, y_hat, mask, meta_data
 
 # Cell
-def model_fit_predict(mc, S_df, Y_df, X_df, f_cols, evaluate_train, ds_in_val, ds_in_test):
+def model_fit_predict(mc, S_df, Y_df, X_df, f_cols, evaluate_train, ds_in_val, ds_in_test,
+                      return_arrays=True, loss_fns_val=None, loss_fns_test=None):
 
-    # Protect inplace modifications
-    Y_df = Y_df.copy()
-    if X_df is not None:
+    # Protect inplace modifications ONLY if normalization is requested to avoid wasteful copies
+    if mc.get('normalizer_y') is not None:
+        Y_df = Y_df.copy()
+    if X_df is not None and mc.get('normalizer_x') is not None:
         X_df = X_df.copy()
     if S_df is not None:
         S_df = S_df.copy()
@@ -476,6 +557,13 @@ def model_fit_predict(mc, S_df, Y_df, X_df, f_cols, evaluate_train, ds_in_val, d
                          logger=False)
     trainer.fit(model, train_loader, val_loader)
 
+    # Free trainer and training memory before predicting (trainer is not needed for manual predict)
+    del trainer
+    if not evaluate_train:
+        del train_loader, train_dataset
+    import gc
+    gc.collect()
+
     #------------------------------------------------ Predict ------------------------------------------------#
     results = {}
 
@@ -484,32 +572,77 @@ def model_fit_predict(mc, S_df, Y_df, X_df, f_cols, evaluate_train, ds_in_val, d
                                         batch_size=1,
                                         shuffle=False)
 
-        y_true, y_hat, mask, meta_data = predict(mc, model, trainer, train_loader, scaler_y)
+        y_true, y_hat, mask, meta_data = predict(mc, model, None, train_loader, scaler_y, return_arrays=True)
         train_values = (('train_y_true', y_true), ('train_y_hat', y_hat), ('train_mask', mask), ('train_meta_data', meta_data))
         results.update(train_values)
 
         print(f"TRAIN y_true.shape: {y_true.shape}")
         print(f"TRAIN y_hat.shape: {y_hat.shape}")
         print("\n")
+
+        # Free train resources if they were used
+        del train_loader, train_dataset
+        import gc
+        gc.collect()
         
     if ds_in_val > 0:
-        y_true, y_hat, mask, meta_data = predict(mc, model, trainer, val_loader, scaler_y)
-        val_values = (('val_y_true', y_true), ('val_y_hat', y_hat), ('val_mask', mask), ('val_meta_data', meta_data))
-        results.update(val_values)
+        if not return_arrays and loss_fns_val is not None:
+            metrics = predict(mc, model, None, val_loader, scaler_y, return_arrays=False, loss_fns=loss_fns_val)
+            results['val_loss'] = metrics['val_loss']
+        else:
+            y_true, y_hat, mask, meta_data = predict(mc, model, None, val_loader, scaler_y, return_arrays=True)
+            val_values = (('val_y_true', y_true), ('val_y_hat', y_hat), ('val_mask', mask), ('val_meta_data', meta_data))
+            results.update(val_values)
 
-        print(f"VAL y_true.shape: {y_true.shape}")
-        print(f"VAL y_hat.shape: {y_hat.shape}")
-        print("\n")
+            print(f"VAL y_true.shape: {y_true.shape}")
+            print(f"VAL y_hat.shape: {y_hat.shape}")
+            print("\n")
+
+        # Free validation memory right after predicting it
+        del val_loader, val_dataset
+        import gc
+        gc.collect()
 
     # Predict test if available
     if ds_in_test > 0:
-        y_true, y_hat, mask, meta_data = predict(mc, model, trainer, test_loader, scaler_y)
-        test_values = (('test_y_true', y_true), ('test_y_hat', y_hat), ('test_mask', mask), ('test_meta_data', meta_data))
-        results.update(test_values)
+        if not return_arrays and loss_fns_test is not None:
+            metrics = predict(mc, model, None, test_loader, scaler_y, return_arrays=False, loss_fns=loss_fns_test)
+            results['test_losses'] = metrics
+        else:
+            y_true, y_hat, mask, meta_data = predict(mc, model, None, test_loader, scaler_y, return_arrays=True)
+            test_values = (('test_y_true', y_true), ('test_y_hat', y_hat), ('test_mask', mask), ('test_meta_data', meta_data))
+            results.update(test_values)
 
-        print(f"TEST y_true.shape: {y_true.shape}")
-        print(f"TEST y_hat.shape: {y_hat.shape}")
-        print("\n")
+            print(f"TEST y_true.shape: {y_true.shape}")
+            print(f"TEST y_hat.shape: {y_hat.shape}")
+            print("\n")
+
+    # Clean up references to free memory
+    if 'train_loader' in locals():
+        try: del train_loader
+        except: pass
+    if 'val_loader' in locals():
+        try: del val_loader
+        except: pass
+    if 'test_loader' in locals():
+        try: del test_loader
+        except: pass
+    if 'train_dataset' in locals():
+        try: del train_dataset
+        except: pass
+    if 'val_dataset' in locals():
+        try: del val_dataset
+        except: pass
+    if 'test_dataset' in locals():
+        try: del test_dataset
+        except: pass
+    if 'model' in locals():
+        try: del model
+        except: pass
+    import gc
+    gc.collect()
+    if t.cuda.is_available():
+        t.cuda.empty_cache()
 
     return results
 
@@ -549,11 +682,17 @@ def evaluate_model(mc, loss_function_val, loss_functions_test,
                                 f_cols=f_cols,
                                 evaluate_train=evaluate_train,
                                 ds_in_val=ds_in_val,
-                                ds_in_test=ds_in_test)
+                                ds_in_test=ds_in_test,
+                                return_arrays=return_forecasts,
+                                loss_fns_val={'val_loss': loss_function_val},
+                                loss_fns_test=loss_functions_test)
     run_time = time.time() - start
 
     # Evaluate predictions
-    val_loss = loss_function_val(y=results['val_y_true'], y_hat=results['val_y_hat'], weights=results['val_mask'], **loss_kwargs)
+    if 'val_loss' in results:
+        val_loss = results['val_loss']
+    else:
+        val_loss = loss_function_val(y=results['val_y_true'], y_hat=results['val_y_hat'], weights=results['val_mask'], **loss_kwargs)
 
     results_output = {'loss': val_loss,
                       'mc': mc,
@@ -569,10 +708,13 @@ def evaluate_model(mc, loss_function_val, loss_functions_test,
         
     # Evaluation in test (if provided)
     if ds_in_test > 0:
-        test_loss_dict = {}
-        for loss_name, loss_function in loss_functions_test.items():
-            test_loss_dict[loss_name] = loss_function(y=results['test_y_true'], y_hat=results['test_y_hat'], weights=results['test_mask'])
-        results_output['test_losses'] = test_loss_dict
+        if 'test_losses' in results:
+            results_output['test_losses'] = results['test_losses']
+        else:
+            test_loss_dict = {}
+            for loss_name, loss_function in loss_functions_test.items():
+                test_loss_dict[loss_name] = loss_function(y=results['test_y_true'], y_hat=results['test_y_hat'], weights=results['test_mask'])
+            results_output['test_losses'] = test_loss_dict
 
     if return_forecasts:
         forecasts_test = {}
@@ -580,6 +722,11 @@ def evaluate_model(mc, loss_function_val, loss_functions_test,
                         ('test_mask', results['test_mask']), ('test_meta_data', results['test_meta_data']))
         forecasts_test.update(test_values)
         results_output['forecasts_test'] = forecasts_test
+
+    # Clean up predictions dictionary to free RAM from large numpy arrays
+    del results
+    import gc
+    gc.collect()
 
     return results_output
 

@@ -38,7 +38,7 @@ def main(args):
         maes = []
         mses = []
         for file_ in files:
-            mae_data, mse_data = get_score_min_val(file_)
+            mae_data, mse_data, _ = get_score_min_val(file_)
             maes.append(mae_data)
             mses.append(mse_data)
 

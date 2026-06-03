@@ -104,14 +104,16 @@ def main():
     # Shapes are: (n_windows, n_series, horizon)
     print(f"Predictions extracted successfully. Shape: {y_true.shape}")
     
-    # Evaluate at specific steps: T+1, T+4, T+6, T+12, T+24, T+48
+    # ------------------ Table 1: Raw Step-Based Evaluation ------------------
+    # Here, T+k means k raw time steps ahead (10-mins for Weather, 1-hour for ECL)
     steps_to_evaluate = [1, 4, 6, 12, 24, 48]
     
-    print("\n" + 60*"=")
-    print(f"   Step-Wise Performance Summary for {dataset.upper()} (Horizon: {horizon})")
-    print(60*"=")
+    print("\n" + 65*"=")
+    print(f"   Table 1: Step-Based Performance Summary for {dataset.upper()} (Horizon: {horizon})")
+    print(f"   (T+k represents predicting k raw steps/intervals ahead)")
+    print(65*"=")
     print(f"  {'Step':<10} | {'Horizon Index':<15} | {'MSE':<12} | {'MAE':<12}")
-    print(60*"-")
+    print(65*"-")
     
     for step in steps_to_evaluate:
         idx = step - 1
@@ -123,7 +125,6 @@ def main():
         y_h_step = y_hat[..., idx]
         mask_step = mask[..., idx]
         
-        # Calculate masked errors
         valid_mask = mask_step > 0
         y_t_valid = y_t_step[valid_mask]
         y_h_valid = y_h_step[valid_mask]
@@ -133,7 +134,51 @@ def main():
         
         print(f"  T+{step:<8} | Index {idx:<14} | {step_mse:<12.6f} | {step_mae:<12.6f}")
         
-    print(60*"=")
+    print(65*"=")
+
+    # ------------------ Table 2: Hour-Based Evaluation ------------------
+    # Here, T+k Hours means predicting k physical hours ahead
+    hours_to_evaluate = [1, 4, 6, 12, 24, 48]
+    
+    # Map physical hours to index based on dataset sampling rate
+    if dataset == 'weather':
+        # Weather is 10-minute intervals (6 intervals per hour)
+        hour_to_step_factor = 6
+        time_unit = "10-minute steps"
+    else:
+        # ECL, ETTm2, Exchange, traffic are hourly (1 interval per hour)
+        hour_to_step_factor = 1
+        time_unit = "1-hour steps"
+        
+    print("\n" + 65*"=")
+    print(f"   Table 2: Hour-Based Performance Summary for {dataset.upper()} (Horizon: {horizon})")
+    print(f"   (T+k Hours represents predicting k physical hours ahead)")
+    print(65*"=")
+    print(f"  {'Time Ahead':<12} | {'Horizon Index':<15} | {'MSE':<12} | {'MAE':<12}")
+    print(65*"-")
+    
+    for hr in hours_to_evaluate:
+        step_number = hr * hour_to_step_factor
+        idx = step_number - 1
+        
+        if idx >= horizon:
+            print(f"  T+{hr} Hr(s)    | Index {idx:<14} | {'N/A':<12} | {'N/A (Exceeds Horizon)':<12}")
+            continue
+            
+        y_t_step = y_true[..., idx]
+        y_h_step = y_hat[..., idx]
+        mask_step = mask[..., idx]
+        
+        valid_mask = mask_step > 0
+        y_t_valid = y_t_step[valid_mask]
+        y_h_valid = y_h_step[valid_mask]
+        
+        step_mse = np.mean((y_t_valid - y_h_valid) ** 2)
+        step_mae = np.mean(np.abs(y_t_valid - y_h_valid))
+        
+        print(f"  T+{hr:<2} Hr(s)     | Index {idx:<14} | {step_mse:<12.6f} | {step_mae:<12.6f}")
+        
+    print(65*"=")
     
     # Explicitly garbage collect
     del Y_df, y_true, y_hat, mask, results

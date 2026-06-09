@@ -76,7 +76,7 @@ def MSELoss(y, y_hat, mask=None):
 
     mse = (y - y_hat)**2
     mse = mask * mse
-    mse = t.mean(mse)
+    mse = mse.sum() / mask.sum().clamp(min=1)
     return mse
 
 # Cell
@@ -221,7 +221,7 @@ def MAELoss(y, y_hat, mask=None):
     if mask is None: mask = t.ones_like(y_hat)
 
     mae = t.abs(y - y_hat) * mask
-    mae = t.mean(mae)
+    mae = mae.sum() / mask.sum().clamp(min=1)
     return mae
 
 # Cell

@@ -31,11 +31,11 @@ def get_experiment_space(args):
         'n_blocks': hp.choice('n_blocks', [3 * [1]]),
         'n_layers': hp.choice('n_layers', [3 * [2], 9 * [2]]),  # CPU-friendly lighter stack option
         'n_hidden': hp.choice('n_hidden', [256, 512]),          # CPU-friendly smaller width option
-        'n_pool_kernel_size': hp.choice('n_pool_kernel_size', [3 * [1], 3 * [2], 3 * [4], 3 * [8], [8, 4, 1], [16, 8, 1]]),
+        'n_pool_kernel_size': hp.choice('n_pool_kernel_size', [3 * [1], 3 * [12], 3 * [24], 3 * [48], [48, 24, 1], [96, 48, 1]]),
         'n_freq_downsample': hp.choice('n_freq_downsample', [
-            [168, 24, 1], [24, 12, 1],
-            [180, 60, 1], [60, 8, 1],
-            [40, 20, 1]
+            [1008, 144, 1], [144, 72, 1],
+            [1080, 360, 1], [360, 48, 1],
+            [240, 120, 1]
         ]),
         'pooling_mode': hp.choice('pooling_mode', ['max']),
         'interpolation_mode': hp.choice('interpolation_mode', ['linear']),
@@ -61,8 +61,8 @@ def get_experiment_space(args):
         'normalizer_y': hp.choice('normalizer_y', [None]),
         'normalizer_x': hp.choice('normalizer_x', [None]),
         'complete_windows': hp.choice('complete_windows', [True]),
-        'frequency': hp.choice('frequency', ['H']),
-        'seasonality': hp.choice('seasonality', [24]),
+        'frequency': hp.choice('frequency', ['10T']),
+        'seasonality': hp.choice('seasonality', [144]),
         'idx_to_sample_freq': hp.choice('idx_to_sample_freq', [1]),
         'val_idx_to_sample_freq': hp.choice('val_idx_to_sample_freq', [1]),
         'batch_size': hp.choice('batch_size', [1]),

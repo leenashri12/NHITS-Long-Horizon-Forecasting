@@ -3,7 +3,11 @@ import pickle
 
 def load_best_config(file_path):
     if not os.path.isfile(file_path):
-        return None
+        v2_path = file_path.replace('.p', '_v2.p')
+        if os.path.isfile(v2_path):
+            file_path = v2_path
+        else:
+            return None
     try:
         with open(file_path, 'rb') as f:
             trials = pickle.load(f)

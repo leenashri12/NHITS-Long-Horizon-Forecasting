@@ -296,7 +296,7 @@ def __getitem__(self: BaseDataset,
         - idxs
     """
     # Checks for idx
-    pass
+    raise NotImplementedError("Subclasses must implement __getitem__")
 
 # Cell
 @patch

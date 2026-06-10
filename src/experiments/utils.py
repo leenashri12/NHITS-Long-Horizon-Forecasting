@@ -454,8 +454,9 @@ def predict(mc, model, trainer, loader, scaler_y, return_arrays=True, loss_fns=N
 
                if mc['normalizer_y'] is not None:
                    y_t_shape = y_t_np.shape
+                   y_h_shape = y_h_np.shape
                    y_t_np = scaler_y.inv_scale(x=y_t_np.flatten()).reshape(y_t_shape)
-                   y_h_np = scaler_y.inv_scale(x=y_h_np.flatten()).reshape(y_t_shape)
+                   y_h_np = scaler_y.inv_scale(x=y_h_np.flatten()).reshape(y_h_shape)
 
                for name, fn in loss_fns.items():
                    # Normalize the check (sometimes fn has name 'mae' or 'mse', or key name)
@@ -504,11 +505,12 @@ def predict(mc, model, trainer, loader, scaler_y, return_arrays=True, loss_fns=N
    # Scale to original scale
    if mc['normalizer_y'] is not None:
         y_true_shape = y_true.shape
+        y_hat_shape = y_hat.shape
         y_true = scaler_y.inv_scale(x=y_true.flatten())
         y_true = np.reshape(y_true, y_true_shape)
 
         y_hat = scaler_y.inv_scale(x=y_hat.flatten())
-        y_hat = np.reshape(y_hat, y_true_shape)
+        y_hat = np.reshape(y_hat, y_hat_shape)
 
    return y_true, y_hat, mask, meta_data
 

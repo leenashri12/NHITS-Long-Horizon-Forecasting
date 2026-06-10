@@ -27,11 +27,11 @@ def get_split_lengths(dataset):
 
 def main():
     results_dir = './results/multivariate/'
-    pattern = os.path.join(results_dir, "*", "NHITS", "hyperopt_gpu_deep_search.p")
+    pattern = os.path.join(results_dir, "*", "NHITS", "hyperopt_gpu_deep_search*.p")
     files = glob.glob(pattern)
     
     if not files:
-        print("No hyperopt_gpu_deep_search.p files found. Check your directories.")
+        print("No hyperopt_gpu_deep_search*.p files found. Check your directories.")
         return
 
     # Sort files to process in a consistent order
